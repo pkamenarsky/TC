@@ -1,4 +1,5 @@
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Internal as B
 
 import Control.Applicative
@@ -124,6 +125,7 @@ printHdr (hdr, _) = hdrUseconds hdr
 data Ethernet = Ethernet {ether_dhost :: [Word8], ether_shost :: [Word8], ether_type :: Word16} deriving Show
 data Ip = Ip {ip_vhl :: Word8, ip_tos :: Word8, ip_len :: Word16, ip_id :: Word16, ip_off :: Word16,
 	ip_ttl :: Word8, ip_p :: Word8, ip_sum :: Word16, ip_src :: Word32, ip_dst :: Word32} deriving Show
+data Udp = Udp {udp_sport :: Word16, udp_dport :: Word16, udp_length :: Word16, udp_csum :: Word16, udp_payload :: [Word8]} deriving Show
 
 parseEthernetFrame :: SG.Get Ethernet
 parseEthernetFrame = do
@@ -146,9 +148,36 @@ parseIpFrame = do
 	ip_dst <- SG.getWord32be
 	return $ Ip ip_vhl ip_tos ip_len ip_id ip_off ip_ttl ip_p ip_sum ip_src ip_dst
 
+parseUDPFrame :: SG.Get Udp
+parseUDPFrame = do
+	udp_sport <- SG.getWord16be
+	udp_dport <- SG.getWord16be
+	udp_length <- SG.getWord16be
+	udp_csum <- SG.getWord16be
+	udp_payload <- replicateM ((fromIntegral udp_length) - 8) SG.getWord8
+	return $ Udp udp_sport udp_dport udp_length udp_csum udp_payload
+
+-- QPackets
+
+newtype Bid = Bid (Int, Int) deriving Show
+
+data QPacket = QPacket {q_dtype :: String, q_itype :: String, q_mtype :: String, q_icode :: String,
+	q_isno :: String, q_mstype :: String, q_tbid :: Int, q_bids :: [Bid]} deriving Show
+
+parseBid :: [Word8] -> Bid
+parseBid = undefined
+
+tstr = map (toEnum . fromEnum)
+
+parseQPacket :: [Word8] -> QPacket
+parseQPacket bytes = let
+	(q_dtype, r) = splitAt 2 bytes
+	(q_itype, r') = splitAt 2 r in
+		QPacket (tstr q_dtype) (tstr q_itype) "" "" "" "" 0 []
+
 -- main
 
-main = runFrame $ printerF <-< mapF (\((Right r), _) -> r) <-< mapF (\(_, bs) -> SG.runGet (parseEthernetFrame >> parseIpFrame) bs) <-< take' 10 <-< readPcapF "mdf-kospi200.20110216-0.pcap"
+main = runFrame $ printerF <-< mapF (parseQPacket . udp_payload) <-< mapF (\((Right r), _) -> r) <-< mapF (\(_, bs) -> SG.runGet (parseEthernetFrame >> parseIpFrame >> parseUDPFrame) bs) <-< take' 10 <-< readPcapF "mdf-kospi200.20110216-0.pcap"
 
 main5 = runFrame $ printerF <-< mapF fst <-< take' 10 <-< readPcapF "mdf-kospi200.20110216-0.pcap"
 
