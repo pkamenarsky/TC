@@ -2,6 +2,11 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Internal as B
 
+import Data.Time.Format
+import Data.Time.Clock
+
+import System.Locale
+
 import Control.Applicative
 
 import Data.Binary
@@ -185,6 +190,11 @@ parseQPacket bytes = let
 	[q_dtype, q_itype, q_mtype, q_icode, q_isno, q_mstype, q_tbid, _, q_task, _, _, q_accept] = map tstr parsed in
 		QPacket q_dtype q_itype q_mtype q_icode q_isno q_mstype q_tbid (parseMany 5 parseBid bids) q_task (parseMany 5 parseAsk asks) q_accept
 
+-- Time
+
+parsePacketTime :: String -> Maybe UTCTime
+parsePacketTime = parseTime defaultTimeLocale "%Y%m%d%H%M%S"
+
 -- Sort
 
 sortAccumF :: Monad m => [a] -> Ensure a a m ()
@@ -208,7 +218,9 @@ replicateF n x = Frame $ close $ replicateM_ n $ yieldF x
 
 -- main
 
-main = runFrame $ printerF <-< sortF <-< replicateF 13 5
+main = print $ parsePacketTime "20120606060606"
+
+main8 = runFrame $ printerF <-< sortF <-< replicateF 13 5
 
 main7 = runFrame $ printerF <-< mapF (parseQPacket . udp_payload) <-< mapF (\((Right r), _) -> r) <-< mapF (\(_, bs) -> SG.runGet (parseEthernetFrame >> parseIpFrame >> parseUDPFrame) bs) <-< take' 10 <-< readPcapF "mdf-kospi200.20110216-0.pcap"
 
