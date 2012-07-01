@@ -159,21 +159,31 @@ parseUDPFrame = do
 
 -- QPackets
 
-newtype Bid = Bid (Int, Int) deriving Show
+newtype Bid = Bid (String, String) deriving Show
+newtype Ask = Ask (String, String) deriving Show
 
 data QPacket = QPacket {q_dtype :: String, q_itype :: String, q_mtype :: String, q_icode :: String,
-	q_isno :: String, q_mstype :: String, q_tbid :: Int, q_bids :: [Bid]} deriving Show
-
-parseBid :: [Word8] -> Bid
-parseBid = undefined
+	q_isno :: String, q_mstype :: String, q_tbid :: String, q_bids :: [Bid], q_task :: String, q_asks :: [Ask], q_accept :: String} deriving Show
 
 tstr = map (toEnum . fromEnum)
 
+parsee :: [Int] -> [Word8] -> [[Word8]]
+parsee intervals bytes = fst $ foldl (\(list, bytes) x -> let (w, bytes') = splitAt x bytes in (list ++ [w], bytes')) ([], bytes) intervals
+
+parseBid :: [Word8] -> Bid
+parseBid bytes = let [price, quant] = map tstr $ parsee [5, 7] bytes in
+	Bid (price, quant)
+
+parseAsk :: [Word8] -> Ask
+parseAsk bytes = let [price, quant] = map tstr $ parsee [5, 7] bytes in
+	Ask (price, quant)
+
 parseQPacket :: [Word8] -> QPacket
 parseQPacket bytes = let
-	(q_dtype, r) = splitAt 2 bytes
-	(q_itype, r') = splitAt 2 r in
-		QPacket (tstr q_dtype) (tstr q_itype) "" "" "" "" 0 []
+	parseMany n f b = map f $ parsee (replicate n 12) b
+	parsed@[_, _, _, _, _, _, _, bids, _, asks, _, _] = parsee [2, 2, 1, 12, 3, 2, 7, 60, 7, 60, 50, 8] bytes
+	[q_dtype, q_itype, q_mtype, q_icode, q_isno, q_mstype, q_tbid, _, q_task, _, _, q_accept] = map tstr parsed in
+		QPacket q_dtype q_itype q_mtype q_icode q_isno q_mstype q_tbid (parseMany 5 parseBid bids) q_task (parseMany 5 parseAsk asks) q_accept
 
 -- main
 
