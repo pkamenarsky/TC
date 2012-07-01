@@ -85,15 +85,6 @@ toBS (hdr, ptr) = do
     s <- B.create (fromIntegral len) $ \p -> B.memcpy p ptr (fromIntegral len)
     return (hdr, s)
 
-readNextF :: Ptr PcapTag -> Ensure () (PktHdr, BS.ByteString) IO ()
-readNextF h = do
-	packet@(hdr, _) <- lift $ next h
-	case hdr of
-		PktHdr 0 0 0 0 -> return ()
-		_ -> do
-			lift (toBS packet) >>= yieldF
-			readNextF h
-
 take' :: Int -> Frame a a IO ()
 take' n
    | n < 1 = Frame $ close $ lift $ putStrLn "You shall not pass!"
@@ -105,6 +96,15 @@ take' n
          close $ do
              lift $ putStrLn "You shall not pass!"
              yieldF x
+
+readNextF :: Ptr PcapTag -> Ensure () (PktHdr, BS.ByteString) IO ()
+readNextF h = do
+	packet@(hdr, _) <- lift $ next h
+	case hdr of
+		PktHdr 0 0 0 0 -> return ()
+		_ -> do
+			lift (toBS packet) >>= yieldF
+			readNextF h
 
 readPcapF :: FilePath -> Frame () (PktHdr, BS.ByteString) IO ()
 readPcapF name = Frame $ close $ do
@@ -185,9 +185,32 @@ parseQPacket bytes = let
 	[q_dtype, q_itype, q_mtype, q_icode, q_isno, q_mstype, q_tbid, _, q_task, _, _, q_accept] = map tstr parsed in
 		QPacket q_dtype q_itype q_mtype q_icode q_isno q_mstype q_tbid (parseMany 5 parseBid bids) q_task (parseMany 5 parseAsk asks) q_accept
 
+-- Sort
+
+sortAccumF :: Monad m => [a] -> Ensure a a m ()
+sortAccumF a@(x:xs) = do
+	n <- awaitF
+	if length a > 10
+		then do
+			yieldF x
+			sortAccumF $ xs ++ [n]
+		else
+			sortAccumF $ a ++ [n]
+sortAccumF [] = do
+	n <- awaitF
+	sortAccumF [n]
+
+sortF :: (Monad m) => Frame Int Int m r
+sortF = Frame $ forever $ sortAccumF []
+
+replicateF :: (Monad m) => Int -> a -> Frame () a m ()
+replicateF n x = Frame $ close $ replicateM_ n $ yieldF x
+
 -- main
 
-main = runFrame $ printerF <-< mapF (parseQPacket . udp_payload) <-< mapF (\((Right r), _) -> r) <-< mapF (\(_, bs) -> SG.runGet (parseEthernetFrame >> parseIpFrame >> parseUDPFrame) bs) <-< take' 10 <-< readPcapF "mdf-kospi200.20110216-0.pcap"
+main = runFrame $ printerF <-< sortF <-< replicateF 13 5
+
+main7 = runFrame $ printerF <-< mapF (parseQPacket . udp_payload) <-< mapF (\((Right r), _) -> r) <-< mapF (\(_, bs) -> SG.runGet (parseEthernetFrame >> parseIpFrame >> parseUDPFrame) bs) <-< take' 10 <-< readPcapF "mdf-kospi200.20110216-0.pcap"
 
 main5 = runFrame $ printerF <-< mapF fst <-< take' 10 <-< readPcapF "mdf-kospi200.20110216-0.pcap"
 
