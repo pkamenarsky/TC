@@ -5,6 +5,7 @@ import qualified Data.ByteString.Internal as B
 import Debug.Trace
 
 import Data.Time.Format
+import Data.Time.LocalTime
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
 
@@ -12,6 +13,7 @@ import System.Locale
 
 import Control.Applicative
 
+import Data.Maybe
 import Data.List
 import Data.Binary
 import qualified Data.Binary.Strict.Get as SG
@@ -217,31 +219,60 @@ sortF f = Frame $ forever $ sortAccumF f []
 replicateF :: (Monad m) => Int -> a -> Frame () a m ()
 replicateF n x = Frame $ close $ replicateM_ n $ yieldF x
 
+filterF :: (Monad m) => (a -> Bool) -> Frame a a m ()
+filterF f = Frame $ forever $ do
+	x <- awaitF
+	when (f x) $ yieldF x
+
 -- Time
 
-parsePacketTime :: String -> Int
-parsePacketTime str = let
+parsePacketTime :: PktHdr -> Int
+parsePacketTime header = let
+	secs = fromIntegral $ hdrSeconds header
+	usecs = fromIntegral $ hdrUseconds header in
+		secs * 1000 + usecs `div` 1000
+
+parseQPacketTime :: String -> Int
+parseQPacketTime str = let
 	(timestr, uustr) = splitAt 6 str
-	(Just utc) = parseTime defaultTimeLocale "%Y%m%d%H%M%S" ("20110216" ++ timestr)
-	secs = floor $ utcTimeToPOSIXSeconds utc 
+	(Just local) = parseTime defaultTimeLocale "%Y%m%d%H%M%S" ("20110216" ++ timestr)
+	secs = floor $ utcTimeToPOSIXSeconds $ localTimeToUTC (hoursToTimeZone 9) local
 	(uu, _):_ = reads uustr :: [(Int, String)] in
 		secs * 1000 + uu * 10
 
--- main
+-- Packet
 
-main = print $ parsePacketTime "08595999"
-	--let (Just t) = parsePacketTime "20120606060606"
-	-- print $ floor $ utcTimeToPOSIXSeconds t
+data Packet = Packet {p_time :: Int, p_qtime :: Int, p_qpacket :: QPacket}
+
+instance Show Packet where
+	show (Packet t qt qp) =
+		show t ++ " " ++
+		show qt ++ " " ++
+		q_icode qp
+
+instance Eq Packet where
+	(==) p1 p2 = p_qtime p1 == p_qtime p2
+
+instance Ord Packet where
+	compare p1 p2 = compare (p_qtime p1) (p_qtime p2)
+
+processPacket :: (PktHdr, BS.ByteString) -> Maybe Packet
+processPacket (header, content) = let
+	((Right udp), _) = SG.runGet (parseEthernetFrame >> parseIpFrame >> parseUDPFrame) content
+	qp = parseQPacket $ udp_payload udp in
+		if (q_dtype qp == "B6" && q_itype qp == "03" && q_mtype qp == "4")
+			then Just $ Packet (parsePacketTime header) (parseQPacketTime $ q_accept qp) qp
+			else Nothing
+
+-- main
 
 main9 = runFrame $ printerF <-< sortF (\x y -> y - x > 100) <-< (Frame $ close $ mapM_ yieldF [4, 9, 1, 2, 3])
 
-main8 = runFrame $ printerF <-< mapF (parseQPacket . udp_payload) <-< mapF (\((Right r), _) -> r) <-< mapF (\(_, bs) -> SG.runGet (parseEthernetFrame >> parseIpFrame >> parseUDPFrame) bs) <-< take' 10 <-< readPcapF "mdf-kospi200.20110216-0.pcap"
+main = runFrame $
+	printerF <-<
+	sortF (\p1 p2 -> p_time p2 - p_qtime p1 > 3000) <-<
+	mapF fromJust <-< filterF isJust <-<
+	mapF processPacket <-<
+	take' 10 <-<
+	readPcapF "mdf-kospi200.20110216-0.pcap"
 
-main5 = runFrame $ printerF <-< mapF fst <-< take' 10 <-< readPcapF "mdf-kospi200.20110216-0.pcap"
-
-main3 = do
-	h <- openPcap "mdf-kospi200.20110216-0.pcap"
-	(hdr, bs) <- next h
-	closePcap h
-	print $ hdrUseconds hdr
-	readPcap "mdf-kospi200.20110216-0.pcap"
