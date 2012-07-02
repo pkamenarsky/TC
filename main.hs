@@ -40,36 +40,7 @@ import Network.Pcap.Base
 
 import Numeric (showHex)
 
-readFileP :: FilePath -> Producer String IO ()
-readFileP name = do
-	contents <- lift $ readFile name
-	let lns = lines contents
-	mapM_ yield lns
-
-readFileF :: FilePath -> Frame () String IO ()
-readFileF name = Frame $ close $ do
-	contents <- lift $ readFile name
-	let lns = lines contents
-	mapM_ yieldF lns
-
-lineLengthP :: (Monad m) => Pipe String Int m ()
-lineLengthP = forever $ await >>= yield . length
-
-printer :: (Show a) => Consumer a IO b
-printer = forever $ do
-	x <- await
-	lift $ print x
-
-printerF :: (Show a) => Frame a Void IO r
-printerF = Frame $ forever $ do
-	x <- awaitF
-	lift $ print x
-
-readPcap :: FilePath -> IO ()
-readPcap name = do
-	h <- PC.openOffline name
-	(header, bs) <- PC.nextBS h
-	print $ PC.hdrTime header
+-- pcap
 
 type ErrBuf = Ptr CChar
 
@@ -90,25 +61,11 @@ openPcap name = withCString name $ \namePtr -> do
 closePcap :: Ptr PcapTag -> IO ()
 closePcap = pcap_close
  
-main2 = runFrame $ printerF <-< readFileF "main.hs"
-
 toBS :: (PktHdr, Ptr Word8) -> IO (PktHdr, B.ByteString)
 toBS (hdr, ptr) = do
     let len = hdrCaptureLength hdr
     s <- B.create (fromIntegral len) $ \p -> B.memcpy p ptr (fromIntegral len)
     return (hdr, s)
-
-take' :: Int -> Frame a a IO ()
-take' n
-   | n < 1 = Frame $ close $ lift $ putStrLn "You shall not pass!"
-   | otherwise = Frame $ do
-         replicateM_ (n - 1) $ do
-             x <- awaitF
-             yieldF x
-         x <- awaitF
-         close $ do
-             lift $ putStrLn "You shall not pass!"
-             yieldF x
 
 readNextF :: Ptr PcapTag -> Ensure () (PktHdr, BS.ByteString) IO ()
 readNextF h = do
@@ -198,7 +155,23 @@ parseQPacket bytes = let
 	[q_dtype, q_itype, q_mtype, q_icode, q_isno, q_mstype, q_tbid, _, q_task, _, _, q_accept] = map tstr parsed in
 		QPacket q_dtype q_itype q_mtype q_icode q_isno q_mstype q_tbid (parseMany 5 parseBid bids) q_task (parseMany 5 parseAsk asks) q_accept
 
--- Sort
+-- Combinators
+
+printerF :: (Show a) => Frame a Void IO r
+printerF = Frame $ forever $ do
+	x <- awaitF
+	lift $ print x
+
+take' :: Int -> Frame a a IO ()
+take' n
+   | n < 1 = Frame $ close $ return ()
+   | otherwise = Frame $ do
+         replicateM_ (n - 1) $ do
+             x <- awaitF
+             yieldF x
+         x <- awaitF
+         close $ do
+             yieldF x
 
 sortAccumF :: Monad m => Ord a => (a -> a -> Bool) -> [a] -> Ensure a a m ()
 sortAccumF f a@(x:xs) = do
@@ -279,7 +252,7 @@ sortPipe = sortF (\p1 p2 -> p_time p2 - p_qtime p1 > 3000)
 processPipe = 
 	mapF fromJust <-< filterF isJust <-<
 	mapF processPacket <-<
-	take' 100 <-<
+	take' 5 <-<
 	readPcapF "mdf-kospi200.20110216-0.pcap"
 
 parseArgs ["-r"] = sortPipe <-< processPipe
