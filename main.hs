@@ -2,6 +2,8 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Internal as B
 
+import System.Environment
+
 import Debug.Trace
 
 import Data.Time.Format
@@ -253,10 +255,12 @@ instance Show Packet where
 		(concat $ intersperse " " $ map (\ask -> ask_quant ask ++ "@" ++ ask_price ask) (q_asks qp))
 
 instance Eq Packet where
-	(==) p1 p2 = p_qtime p1 == p_qtime p2
+	(==) p1 p2 = p_qtime p1 == p_qtime p2 && p_time p1 == p_time p2
 
 instance Ord Packet where
-	compare p1 p2 = compare (p_qtime p1) (p_qtime p2)
+	compare p1 p2
+		| p_qtime p1 == p_qtime p2 = compare (p_time p1) (p_time p2)
+		| otherwise = compare (p_qtime p1) (p_qtime p2)
 
 processPacket :: (PktHdr, BS.ByteString) -> Maybe Packet
 processPacket (header, content) = let
@@ -270,11 +274,17 @@ processPacket (header, content) = let
 
 main9 = runFrame $ printerF <-< sortF (\x y -> y - x > 100) <-< (Frame $ close $ mapM_ yieldF [4, 9, 1, 2, 3])
 
-main = runFrame $
-	printerF <-<
-	sortF (\p1 p2 -> p_time p2 - p_qtime p1 > 3000) <-<
+sortPipe = sortF (\p1 p2 -> p_time p2 - p_qtime p1 > 3000)
+
+processPipe = 
 	mapF fromJust <-< filterF isJust <-<
 	mapF processPacket <-<
-	take' 10 <-<
+	take' 100 <-<
 	readPcapF "mdf-kospi200.20110216-0.pcap"
 
+parseArgs ["-r"] = sortPipe <-< processPipe
+parseArgs _ = processPipe
+
+main = do
+	args <- getArgs
+	runFrame $ printerF <-< parseArgs args
