@@ -190,22 +190,19 @@ parseQPacket bytes = let
 	[q_dtype, q_itype, q_mtype, q_icode, q_isno, q_mstype, q_tbid, _, q_task, _, _, q_accept] = map tstr parsed in
 		QPacket q_dtype q_itype q_mtype q_icode q_isno q_mstype q_tbid (parseMany 5 parseBid bids) q_task (parseMany 5 parseAsk asks) q_accept
 
--- Time
-
-parsePacketTime :: String -> Maybe UTCTime
-parsePacketTime = parseTime defaultTimeLocale "%Y%m%d%H%M%S"
-
 -- Sort
 
-sortAccumF :: Monad m => [a] -> Ensure a a m ()
+sortAccumF :: Monad m => Ord a => [a] -> Ensure a a m ()
 sortAccumF a@(x:xs) = do
-	n <- awaitF
-	if length a > 10
-		then do
-			yieldF x
-			sortAccumF $ xs ++ [n]
-		else
-			sortAccumF $ a ++ [n]
+	n <- await
+	case n of
+		Nothing -> mapM_ yieldF a
+		Just n' -> if length a > 10
+			then do
+				yieldF x
+				sortAccumF $ xs ++ [n']
+			else
+				sortAccumF $ a ++ [n']
 sortAccumF [] = do
 	n <- awaitF
 	sortAccumF [n]
@@ -215,6 +212,11 @@ sortF = Frame $ forever $ sortAccumF []
 
 replicateF :: (Monad m) => Int -> a -> Frame () a m ()
 replicateF n x = Frame $ close $ replicateM_ n $ yieldF x
+
+-- Time
+
+parsePacketTime :: String -> Maybe UTCTime
+parsePacketTime = parseTime defaultTimeLocale "%Y%m%d%H%M%S"
 
 -- main
 
