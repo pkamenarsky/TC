@@ -170,8 +170,8 @@ parseUDPFrame = do
 
 -- QPackets
 
-newtype Bid = Bid (String, String) deriving Show
-newtype Ask = Ask (String, String) deriving Show
+data Bid = Bid {bid_price :: String, bid_quant :: String} deriving Show
+data Ask = Ask {ask_price :: String, ask_quant :: String} deriving Show
 
 data QPacket = QPacket {q_dtype :: String, q_itype :: String, q_mtype :: String, q_icode :: String,
 	q_isno :: String, q_mstype :: String, q_tbid :: String, q_bids :: [Bid], q_task :: String, q_asks :: [Ask], q_accept :: String} deriving Show
@@ -183,11 +183,11 @@ parsee intervals bytes = fst $ foldl (\(list, bytes) x -> let (w, bytes') = spli
 
 parseBid :: [Word8] -> Bid
 parseBid bytes = let [price, quant] = map tstr $ parsee [5, 7] bytes in
-	Bid (price, quant)
+	Bid price quant
 
 parseAsk :: [Word8] -> Ask
 parseAsk bytes = let [price, quant] = map tstr $ parsee [5, 7] bytes in
-	Ask (price, quant)
+	Ask price quant
 
 parseQPacket :: [Word8] -> QPacket
 parseQPacket bytes = let
@@ -248,7 +248,9 @@ instance Show Packet where
 	show (Packet t qt qp) =
 		show t ++ " " ++
 		show qt ++ " " ++
-		q_icode qp
+		q_icode qp ++ " " ++
+		(concat $ intersperse " " $ map (\bid -> bid_quant bid ++ "@" ++ bid_price bid) (reverse $ q_bids qp)) ++ " " ++
+		(concat $ intersperse " " $ map (\ask -> ask_quant ask ++ "@" ++ ask_price ask) (q_asks qp))
 
 instance Eq Packet where
 	(==) p1 p2 = p_qtime p1 == p_qtime p2
