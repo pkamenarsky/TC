@@ -67,6 +67,8 @@ toBS (hdr, ptr) = do
     s <- B.create (fromIntegral len) $ \p -> B.memcpy p ptr (fromIntegral len)
     return (hdr, s)
 
+-- pcap Frames
+
 readNextF :: Ptr PcapTag -> Ensure () (PktHdr, BS.ByteString) IO ()
 readNextF h = do
 	packet@(hdr, _) <- lift $ next h
@@ -81,14 +83,6 @@ readPcapF name = Frame $ close $ do
 	lift $ print "openging file"
 	h <- lift $ openPcap name
 	finallyP (closePcap h >> print "closing file") (readNextF h)
-
-mapF :: (Monad m) => (a -> b) -> Frame a b m r
-mapF f = Frame $ forever $ do
-	x <- awaitF
-	yieldF $ f x
-
-printHdr :: (PktHdr, BS.ByteString) -> Word32
-printHdr (hdr, _) = hdrUseconds hdr
 
 -- UDP
 
@@ -155,7 +149,7 @@ parseQPacket bytes = let
 	[q_dtype, q_itype, q_mtype, q_icode, q_isno, q_mstype, q_tbid, _, q_task, _, _, q_accept] = map tstr parsed in
 		QPacket q_dtype q_itype q_mtype q_icode q_isno q_mstype q_tbid (parseMany 5 parseBid bids) q_task (parseMany 5 parseAsk asks) q_accept
 
--- Combinators
+-- Frame combinators
 
 printerF :: (Show a) => Frame a Void IO r
 printerF = Frame $ forever $ do
@@ -172,6 +166,11 @@ take' n
          x <- awaitF
          close $ do
              yieldF x
+
+mapF :: (Monad m) => (a -> b) -> Frame a b m r
+mapF f = Frame $ forever $ do
+	x <- awaitF
+	yieldF $ f x
 
 sortAccumF :: Monad m => Ord a => (a -> a -> Bool) -> [a] -> Ensure a a m ()
 sortAccumF f a@(x:xs) = do
@@ -247,16 +246,16 @@ processPacket (header, content) = let
 
 main9 = runFrame $ printerF <-< sortF (\x y -> y - x > 100) <-< (Frame $ close $ mapM_ yieldF [4, 9, 1, 2, 3])
 
-sortPipe = sortF (\p1 p2 -> p_time p2 - p_qtime p1 > 3000)
+sortFrame = sortF (\p1 p2 -> p_time p2 - p_qtime p1 > 3000)
 
-processPipe = 
+processFrame = 
 	mapF fromJust <-< filterF isJust <-<
 	mapF processPacket <-<
 	take' 5 <-<
 	readPcapF "mdf-kospi200.20110216-0.pcap"
 
-parseArgs ["-r"] = sortPipe <-< processPipe
-parseArgs _ = processPipe
+parseArgs ["-r"] = sortFrame <-< processFrame
+parseArgs _ = processFrame
 
 main = do
 	args <- getArgs
