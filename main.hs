@@ -9,6 +9,7 @@ import System.Locale
 
 import Control.Applicative
 
+import Data.List
 import Data.Binary
 import qualified Data.Binary.Strict.Get as SG
 import qualified Data.Binary.Strict.BitGet as BG
@@ -192,23 +193,23 @@ parseQPacket bytes = let
 
 -- Sort
 
-sortAccumF :: Monad m => Ord a => [a] -> Ensure a a m ()
-sortAccumF a@(x:xs) = do
+sortAccumF :: Monad m => Ord a => (a -> a -> Bool) -> [a] -> Ensure a a m ()
+sortAccumF f a@(x:xs) = do
 	n <- await
 	case n of
 		Nothing -> mapM_ yieldF a
-		Just n' -> if length a > 10
+		Just n' -> if f x n'
 			then do
 				yieldF x
-				sortAccumF $ xs ++ [n']
+				sortAccumF f $ insert n' xs
 			else
-				sortAccumF $ a ++ [n']
-sortAccumF [] = do
+				sortAccumF f $ insert n' a
+sortAccumF f [] = do
 	n <- awaitF
-	sortAccumF [n]
+	sortAccumF f [n]
 
-sortF :: (Monad m) => Frame Int Int m r
-sortF = Frame $ forever $ sortAccumF []
+sortF :: Monad m => Ord a => (a -> a -> Bool) -> Frame a a m r
+sortF f = Frame $ forever $ sortAccumF f []
 
 replicateF :: (Monad m) => Int -> a -> Frame () a m ()
 replicateF n x = Frame $ close $ replicateM_ n $ yieldF x
@@ -220,9 +221,9 @@ parsePacketTime = parseTime defaultTimeLocale "%Y%m%d%H%M%S"
 
 -- main
 
-main = print $ parsePacketTime "20120606060606"
+main8 = print $ parsePacketTime "20120606060606"
 
-main8 = runFrame $ printerF <-< sortF <-< replicateF 13 5
+main = runFrame $ printerF <-< sortF (\x y -> y - x > 100) <-< (Frame $ close $ mapM_ yieldF [4, 9, 1, 2, 3])
 
 main7 = runFrame $ printerF <-< mapF (parseQPacket . udp_payload) <-< mapF (\((Right r), _) -> r) <-< mapF (\(_, bs) -> SG.runGet (parseEthernetFrame >> parseIpFrame >> parseUDPFrame) bs) <-< take' 10 <-< readPcapF "mdf-kospi200.20110216-0.pcap"
 
