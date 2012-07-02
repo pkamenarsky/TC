@@ -2,8 +2,11 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Internal as B
 
+import Debug.Trace
+
 import Data.Time.Format
 import Data.Time.Clock
+import Data.Time.Clock.POSIX
 
 import System.Locale
 
@@ -216,16 +219,23 @@ replicateF n x = Frame $ close $ replicateM_ n $ yieldF x
 
 -- Time
 
-parsePacketTime :: String -> Maybe UTCTime
-parsePacketTime = parseTime defaultTimeLocale "%Y%m%d%H%M%S"
+parsePacketTime :: String -> Int
+parsePacketTime str = let
+	(timestr, uustr) = splitAt 6 str
+	(Just utc) = parseTime defaultTimeLocale "%Y%m%d%H%M%S" ("20110216" ++ timestr)
+	secs = floor $ utcTimeToPOSIXSeconds utc 
+	(uu, _):_ = reads uustr :: [(Int, String)] in
+		secs * 1000 + uu * 10
 
 -- main
 
-main8 = print $ parsePacketTime "20120606060606"
+main = print $ parsePacketTime "08595999"
+	--let (Just t) = parsePacketTime "20120606060606"
+	-- print $ floor $ utcTimeToPOSIXSeconds t
 
-main = runFrame $ printerF <-< sortF (\x y -> y - x > 100) <-< (Frame $ close $ mapM_ yieldF [4, 9, 1, 2, 3])
+main9 = runFrame $ printerF <-< sortF (\x y -> y - x > 100) <-< (Frame $ close $ mapM_ yieldF [4, 9, 1, 2, 3])
 
-main7 = runFrame $ printerF <-< mapF (parseQPacket . udp_payload) <-< mapF (\((Right r), _) -> r) <-< mapF (\(_, bs) -> SG.runGet (parseEthernetFrame >> parseIpFrame >> parseUDPFrame) bs) <-< take' 10 <-< readPcapF "mdf-kospi200.20110216-0.pcap"
+main8 = runFrame $ printerF <-< mapF (parseQPacket . udp_payload) <-< mapF (\((Right r), _) -> r) <-< mapF (\(_, bs) -> SG.runGet (parseEthernetFrame >> parseIpFrame >> parseUDPFrame) bs) <-< take' 10 <-< readPcapF "mdf-kospi200.20110216-0.pcap"
 
 main5 = runFrame $ printerF <-< mapF fst <-< take' 10 <-< readPcapF "mdf-kospi200.20110216-0.pcap"
 
