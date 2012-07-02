@@ -80,9 +80,10 @@ readNextF h = do
 
 readPcapF :: FilePath -> Frame () (PktHdr, BS.ByteString) IO ()
 readPcapF name = Frame $ close $ do
-	lift $ print "openging file"
+	-- lift $ print "Opening file"
 	h <- lift $ openPcap name
-	finallyP (closePcap h >> print "closing file") (readNextF h)
+	-- finallyP (closePcap h >> print "Closing file") (readNextF h)
+	finallyP (closePcap h) (readNextF h)
 
 -- UDP
 
@@ -235,12 +236,12 @@ instance Ord Packet where
 		| otherwise = compare (p_qtime p1) (p_qtime p2)
 
 processPacket :: (PktHdr, BS.ByteString) -> Maybe Packet
-processPacket (header, content) = let
-	((Right udp), _) = SG.runGet (parseEthernetFrame >> parseIpFrame >> parseUDPFrame) content
-	qp = parseQPacket $ udp_payload udp in
+processPacket (header, content) = case SG.runGet (parseEthernetFrame >> parseIpFrame >> parseUDPFrame) content of
+	((Right udp), _) -> let qp = parseQPacket $ udp_payload udp in
 		if (q_dtype qp == "B6" && q_itype qp == "03" && q_mtype qp == "4")
 			then Just $ Packet (parsePacketTime header) (parseQPacketTime $ q_accept qp) qp
 			else Nothing
+	_ -> Nothing
 
 -- main
 
@@ -251,7 +252,7 @@ sortFrame = sortF (\p1 p2 -> p_time p2 - p_qtime p1 > 3000)
 processFrame = 
 	mapF fromJust <-< filterF isJust <-<
 	mapF processPacket <-<
-	take' 5 <-<
+	-- take' 100 <-<
 	readPcapF "mdf-kospi200.20110216-0.pcap"
 
 parseArgs ["-r"] = sortFrame <-< processFrame
