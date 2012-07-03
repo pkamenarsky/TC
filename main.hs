@@ -15,6 +15,8 @@ import System.Locale
 
 import Control.Applicative
 
+import qualified Data.PQueue.Min as PQ
+
 import Data.Maybe
 import Data.List
 import Data.Binary
@@ -173,23 +175,25 @@ mapF f = Frame $ forever $ do
 	x <- awaitF
 	yieldF $ f x
 
-sortAccumF :: Monad m => Ord a => (a -> a -> Bool) -> [a] -> Ensure a a m ()
-sortAccumF f a@(x:xs) = do
-	n <- await
-	case n of
-		Nothing -> mapM_ yieldF a
-		Just n' -> if f x n'
-			then do
-				yieldF x
-				sortAccumF f $ insert n' xs
-			else
-				sortAccumF f $ insert n' a
-sortAccumF f [] = do
-	n <- awaitF
-	sortAccumF f [n]
+sortAccumF :: Monad m => Ord a => (a -> a -> Bool) -> PQ.MinQueue a -> Ensure a a m ()
+sortAccumF f q
+	| PQ.null q = do
+		n <- awaitF
+		sortAccumF f $ PQ.singleton n
+	| otherwise = do
+		n <- await
+		let x = PQ.findMin q
+		case n of
+			Nothing -> mapM_ yieldF $ PQ.toAscList q
+			Just n' -> if f x n'
+				then do
+					yieldF x
+					sortAccumF f $ PQ.insert n' $ PQ.deleteMin q
+				else
+					sortAccumF f $ PQ.insert n' q
 
 sortF :: Monad m => Ord a => (a -> a -> Bool) -> Frame a a m r
-sortF f = Frame $ forever $ sortAccumF f []
+sortF f = Frame $ forever $ sortAccumF f $ PQ.empty
 
 replicateF :: (Monad m) => Int -> a -> Frame () a m ()
 replicateF n x = Frame $ close $ replicateM_ n $ yieldF x
@@ -252,7 +256,7 @@ sortFrame = sortF (\p1 p2 -> p_time p2 - p_qtime p1 > 3000)
 processFrame = 
 	mapF fromJust <-< filterF isJust <-<
 	mapF processPacket <-<
-	-- take' 100 <-<
+	take' 100 <-<
 	readPcapF "mdf-kospi200.20110216-0.pcap"
 
 parseArgs ["-r"] = sortFrame <-< processFrame
