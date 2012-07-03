@@ -193,7 +193,7 @@ sortAccumF f q
 					sortAccumF f $ PQ.insert n' q
 
 sortF :: Monad m => Ord a => (a -> a -> Bool) -> Frame a a m r
-sortF f = Frame $ forever $ sortAccumF f $ PQ.empty
+sortF f = Frame $ forever $ sortAccumF f PQ.empty
 
 replicateF :: (Monad m) => Int -> a -> Frame () a m ()
 replicateF n x = Frame $ close $ replicateM_ n $ yieldF x
@@ -256,8 +256,9 @@ sortFrame = sortF (\p1 p2 -> p_time p2 - p_qtime p1 > 3000)
 processFrame = 
 	mapF fromJust <-< filterF isJust <-<
 	mapF processPacket <-<
-	take' 100 <-<
+	-- take' 100 <-<
 	readPcapF "mdf-kospi200.20110216-0.pcap"
+	-- readPcapF "merge3.pcap"
 
 parseArgs ["-r"] = sortFrame <-< processFrame
 parseArgs _ = processFrame
@@ -265,3 +266,27 @@ parseArgs _ = processFrame
 main = do
 	args <- getArgs
 	runFrame $ printerF <-< parseArgs args
+
+-- Analysis
+--
+-- COST CENTRE                    MODULE               %time %alloc
+
+-- readNextF                      Main                  51.0    0.6
+-- printerF                       Main                  21.8    8.7
+-- parseQPacketTime               Main                  11.6   22.5
+-- parseUDPFrame                  Main                   6.1   23.1
+-- parsee                         Main                   4.8   26.8
+
+-- Half the time is spent in readNextF. Since readNextF doesn't do anything special really but call into native code,
+-- I'm assuming that this is incurred by libpcap itself.
+-- IO seems to take another huge chunk of the total time; print is slow.
+-- Interestingly, almost 12%, and sometimes up to 20% are spent in the rather uninteristing function parseQPacketTime
+-- converting qpacket strings to a timestamp. Most of the time seems to be spent in the conversion of POSIXTime ->
+-- Int, hacked together with floor. Unfortunately, I didn't find a faster way to do that using ordinary Haskell libs.
+-- A potential optimization would be to just call into native C code.
+
+-- Heap usage seems to be stable at around ~10k, with the occasional spikes up to 20, 25k. Those can be explained by
+-- the fact that sortF has to maintain a running priority queue of all incoming packets until the packet time of the
+-- most recent packet minus 3000ms is greater than the accept time of the least recent packet. If timestamps are
+-- distributed densely, the queue can grow until the 3000ms interval is reached. After that, memory is gradually
+-- GCd when fewer packets start spanning the difference interval.
