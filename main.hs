@@ -42,6 +42,8 @@ import Network.Pcap.Base
 
 import Numeric (showHex)
 
+import Test.QuickCheck
+
 -- pcap
 
 type ErrBuf = Ptr CChar
@@ -251,8 +253,10 @@ processPacket (header, content) = case SG.runGet (parseEthernetFrame >> parseIpF
 
 main9 = runFrame $ printerF <-< sortF (\x y -> y - x > 100) <-< (Frame $ close $ mapM_ yieldF [4, 9, 1, 2, 3])
 
+sortFrame :: Monad m => Frame Packet Packet m r
 sortFrame = sortF (\p1 p2 -> p_time p2 - p_qtime p1 > 3000)
 
+-- processFrame :: Monad m => Frame () Packet m ()
 processFrame = 
 	mapF fromJust <-< filterF isJust <-<
 	mapF processPacket <-<
@@ -266,6 +270,32 @@ parseArgs _ = processFrame
 main = do
 	args <- getArgs
 	runFrame $ printerF <-< parseArgs args
+
+-- Tests
+
+toList :: (Monad m) => Frame a Void m [a]
+toList = Frame go where
+     go = do
+         x <- await
+         case x of
+             Nothing -> close $ pure []
+             Just a  -> fmap (fmap (a:)) go
+             -- the extra fmap is an unfortunate extra detail
+
+instance Arbitrary Packet where
+	arbitrary = do
+		p_time <- arbitrary
+		p_qtime <- arbitrary
+		return $ Packet p_time p_qtime (QPacket "" "" "" "" "" "" "" [] "" [] "")
+
+prop_packet :: [Packet] -> Bool
+prop_packet packets = let
+	fpackets = sortBy (\x y -> compare (p_time x) (p_time y)) $ filter (\p -> p_time p - p_qtime p <= 3000) packets
+	spackets = fromJust $ fromJust $ runFrame $
+			(Just <$> toList) <-<
+			sortFrame <-<
+			(Nothing <$ (Frame $ close $ mapM_ yieldF fpackets))
+		in sort fpackets == spackets
 
 -- Analysis
 --
